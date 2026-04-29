@@ -1,9 +1,13 @@
+import os
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import pandas as pd
 import numpy as np
-from torch.utils.data import Dataset, DataLoader
+import matplotlib.pyplot as plt
+from torch.utils.data import Dataset, DataLoader, random_split
 
 # 定义数据集类
 class MNISTDataset(Dataset):
@@ -70,25 +74,39 @@ class SimpleCNN(nn.Module):
 # 训练和测试函数
 def train_and_test():
     # 超参数
-    batch_size = 64
+    batch_size = 128
     learning_rate = 0.001
-    epochs = 10
+    epochs = 20
+    validation_split = 0.2  # 验证集比例
     
     # 加载数据
-    train_dataset = MNISTDataset('train.csv')
+    full_train_dataset = MNISTDataset('train.csv')
     test_dataset = MNISTDataset('test.csv', is_test=True)
     
+    # 划分训练集和验证集
+    dataset_size = len(full_train_dataset)
+    val_size = int(validation_split * dataset_size)
+    train_size = dataset_size - val_size
+    train_dataset, val_dataset = random_split(full_train_dataset, [train_size, val_size])
+    
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     
     # 初始化模型、损失函数和优化器
     model = SimpleCNN()
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
+    
+    # 记录loss历史
+    train_loss_history = []
+    val_loss_history = []
     
     # 训练模型
     print('开始训练...')
     for epoch in range(epochs):
+        # 训练阶段
+        model.train()
         running_loss = 0.0
         correct = 0
         total = 0
@@ -109,9 +127,47 @@ def train_and_test():
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
         
-        epoch_loss = running_loss / len(train_loader)
-        epoch_acc = 100 * correct / total
-        print(f'Epoch [{epoch+1}/{epochs}], Loss: {epoch_loss:.4f}, Accuracy: {epoch_acc:.2f}%')
+        train_epoch_loss = running_loss / len(train_loader)
+        train_epoch_acc = 100 * correct / total
+        train_loss_history.append(train_epoch_loss)
+        
+        # 验证阶段
+        model.eval()
+        val_running_loss = 0.0
+        val_correct = 0
+        val_total = 0
+        
+        with torch.no_grad():
+            for images, labels in val_loader:
+                outputs = model(images)
+                loss = criterion(outputs, labels)
+                
+                val_running_loss += loss.item()
+                _, predicted = torch.max(outputs.data, 1)
+                val_total += labels.size(0)
+                val_correct += (predicted == labels).sum().item()
+        
+        val_epoch_loss = val_running_loss / len(val_loader)
+        val_epoch_acc = 100 * val_correct / val_total
+        val_loss_history.append(val_epoch_loss)
+        
+        print(f'Epoch [{epoch+1}/{epochs}], Train Loss: {train_epoch_loss:.4f}, Train Accuracy: {train_epoch_acc:.2f}%, Val Loss: {val_epoch_loss:.4f}, Val Accuracy: {val_epoch_acc:.2f}%')
+    
+    # 保存模型
+    torch.save(model.state_dict(), 'mnist_model.pth')
+    print('\n模型已保存为 mnist_model.pth')
+    
+    # 绘制loss变化图
+    plt.figure(figsize=(10, 6))
+    plt.plot(range(1, epochs+1), train_loss_history, 'b-', label='Training Loss')
+    plt.plot(range(1, epochs+1), val_loss_history, 'r-', label='Validation Loss')
+    plt.title('Training and Validation Loss')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig('loss_plot.png')
+    print('\nLoss变化图已保存为 loss_plot.png')
     
     # 测试模型并生成预测
     print('\n开始测试并生成预测...')

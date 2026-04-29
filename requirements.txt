@@ -3,3 +3,6 @@ torchvision==0.22.1+cu118
 torchaudio==2.7.1+cu118
 pandas==2.2.0
 numpy==1.26.0
+matplotlib==3.10.8
+gradio==6.13.0
+Pillow==12.0.0
