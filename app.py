@@ -38,88 +38,120 @@ model = SimpleCNN()
 model.load_state_dict(torch.load('mnist_model.pth', map_location=torch.device('cpu'), weights_only=True))
 model.eval()
 
-def preprocess_image(image):
-    if image.mode != 'L':
-        image = image.convert('L')
-    image = image.resize((28, 28), Image.Resampling.LANCZOS)
-    image_np = np.array(image)
-    image_np = 255 - image_np
-    image_np = image_np / 255.0
-    image_np = image_np.astype(np.float32)
-    image_tensor = torch.tensor(image_np).unsqueeze(0).unsqueeze(0)
-    return image_tensor
-
-def predict_digit(image):
-    if image is None:
-        return "请上传或绘制一张数字图片", None
+def preprocess_image(image_array):
+    """
+    统一预处理：将任意来源的图像转换为 MNIST 格式张量。
+    MNIST 格式：0.0 = 黑色背景, 1.0 = 白色数字
+    """
+    img = np.array(image_array)
     
-    processed = preprocess_image(image)
+    if img.ndim == 3:
+        if img.shape[2] == 4:
+            # RGBA（来自 Sketchpad）：直接用 alpha 通道作为数字掩码
+            # alpha: 0=透明(无笔迹), 255=不透明(有笔迹)
+            img = img[:, :, 3].astype(np.float32)
+        elif img.shape[2] == 3:
+            # RGB（来自上传图片）：转灰度，然后反色
+            # 原图：白纸(255) + 黑字(0) → 反色后：黑底(0) + 白字(255)
+            img = (255.0 - np.mean(img, axis=2)).astype(np.float32)
+    else:
+        img = img.astype(np.float32)
+    
+    # 此时 img：0=背景, 较大值=数字（与 MNIST 格式一致）
+    
+    # 裁剪数字区域
+    foreground = np.where(img > 30)
+    if len(foreground[0]) > 20:
+        y_min = max(0, foreground[0].min() - 4)
+        y_max = min(img.shape[0] - 1, foreground[0].max() + 4)
+        x_min = max(0, foreground[1].min() - 4)
+        x_max = min(img.shape[1] - 1, foreground[1].max() + 4)
+        img = img[y_min:y_max+1, x_min:x_max+1]
+    
+    # 正方形填充（黑色背景）
+    h, w = img.shape
+    size = max(h, w)
+    padded = np.zeros((size, size), dtype=np.float32)
+    y_off = (size - h) // 2
+    x_off = (size - w) // 2
+    padded[y_off:y_off+h, x_off:x_off+w] = img
+    
+    # 缩放到 28x28
+    pil = Image.fromarray(padded.astype(np.uint8))
+    pil = pil.resize((28, 28), Image.Resampling.LANCZOS)
+    
+    # 归一化到 [0, 1]
+    img_np = np.array(pil).astype(np.float32) / 255.0
+    return torch.tensor(img_np).unsqueeze(0).unsqueeze(0)
+
+def predict(image_tensor):
+    if image_tensor is None:
+        return "处理失败"
     
     with torch.no_grad():
-        output = model(processed)
+        output = model(image_tensor)
         probabilities = torch.nn.functional.softmax(output, dim=1)
         predicted = torch.argmax(probabilities, dim=1).item()
         confidence = probabilities[0][predicted].item() * 100
     
     top3_prob, top3_idx = torch.topk(probabilities, 3)
-    top3_results = [(int(top3_idx[0][i].item()), float(top3_prob[0][i].item()) * 100) for i in range(3)]
+    result = f"预测结果: 数字 {predicted}\n置信度: {confidence:.2f}%\n\nTop-3:\n"
+    for i in range(3):
+        result += f"\u2022 数字 {int(top3_idx[0][i].item())}: {float(top3_prob[0][i].item())*100:.2f}%\n"
     
-    result_text = f"预测结果: {predicted} (置信度: {confidence:.2f}%)\n\nTop-3 预测:\n"
-    for digit, prob in top3_results:
-        result_text += f"  • 数字 {digit}: {prob:.2f}%\n"
+    return result
+
+def predict_image(image):
+    if image is None:
+        return "请上传图片"
+    return predict(preprocess_image(image))
+
+def predict_sketch(sketch_data):
+    if sketch_data is None:
+        return "请在画板上书写数字"
     
-    return result_text, top3_results
+    try:
+        image_data = None
+        
+        if isinstance(sketch_data, dict):
+            # Sketchpad 返回 dict: {'background', 'layers', 'composite'}
+            if 'layers' in sketch_data and sketch_data['layers']:
+                layer = sketch_data['layers'][0]
+                if isinstance(layer, np.ndarray):
+                    image_data = layer
+        elif isinstance(sketch_data, np.ndarray):
+            image_data = sketch_data
+        
+        if image_data is None:
+            return "无法解析画板数据"
+        
+        return predict(preprocess_image(image_data))
+    
+    except Exception as e:
+        return f"处理失败: {str(e)}"
 
 with gr.Blocks(title="手写数字识别") as demo:
-    gr.Markdown("# 🎯 手写数字识别系统")
-    gr.Markdown("上传一张手写数字图片（0-9），或在画板上直接书写，系统将自动识别数字。")
+    gr.Markdown("# \U0001f3af 手写数字识别系统")
     
     with gr.Row():
         with gr.Column(scale=1):
-            gr.Markdown("### 📤 上传图片")
+            gr.Markdown("### \U0001f4e4 上传图片识别")
             image_input = gr.Image(type="pil", label="选择图片", height=200)
+            image_btn = gr.Button("\U0001f680 识别图片")
             
-            gr.Markdown("### ✏️ 或在画板上书写")
-            sketchpad = gr.Sketchpad(label="在此书写数字", height=200)
+            gr.Markdown("### \u270f\ufe0f 手写画板识别")
+            sketch_input = gr.Sketchpad(label="在此书写数字", height=200)
+            sketch_btn = gr.Button("\U0001f680 识别手写")
         
         with gr.Column(scale=1):
-            gr.Markdown("### 📊 预测结果")
-            result_output = gr.Textbox(label="识别结果", lines=6, interactive=False)
+            gr.Markdown("### \U0001f4ca 图片识别结果")
+            image_result = gr.Textbox(label="结果", lines=8)
             
-            gr.Markdown("### 🔍 置信度分布")
-            bar_plot = gr.BarPlot(label="Top-3 概率分布", x="数字", y="置信度", height=200)
+            gr.Markdown("### \U0001f4ca 手写识别结果")
+            sketch_result = gr.Textbox(label="结果", lines=8)
     
-    with gr.Row():
-        submit_btn = gr.Button("🚀 开始识别", size="lg")
-        clear_btn = gr.Button("🗑️ 清除", size="sm")
-    
-    def on_submit(image, sketch):
-        input_image = sketch if sketch is not None else image
-        if input_image is None:
-            return "请上传或绘制一张数字图片", None
-        
-        result_text, top3 = predict_digit(input_image)
-        
-        plot_data = {"数字": [str(d[0]) for d in top3], "置信度": [d[1] for d in top3]}
-        return result_text, plot_data
-    
-    submit_btn.click(
-        fn=on_submit,
-        inputs=[image_input, sketchpad],
-        outputs=[result_output, bar_plot]
-    )
-    
-    def on_clear():
-        return None, None, "请上传或绘制一张数字图片", None
-    
-    clear_btn.click(
-        fn=on_clear,
-        outputs=[image_input, sketchpad, result_output, bar_plot]
-    )
-    
-    gr.Markdown("---")
-    gr.Markdown("### 💡 使用说明")
-    gr.Markdown("1. **上传图片**: 点击左侧上传区域，选择一张手写数字图片\n2. **手写输入**: 在画板上用鼠标或触摸书写数字\n3. **开始识别**: 点击\"开始识别\"按钮获取结果\n4. **清除**: 点击\"清除\"按钮重置输入")
+    image_btn.click(predict_image, inputs=[image_input], outputs=[image_result])
+    sketch_btn.click(predict_sketch, inputs=[sketch_input], outputs=[sketch_result])
 
 if __name__ == "__main__":
-    demo.launch(share=True, theme=gr.themes.Soft())
+    demo.launch(server_name="127.0.0.1", server_port=7861, share=False)

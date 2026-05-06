@@ -1,0 +1,15 @@
+train.csv
+test.csv
+*.zip
+*.pdf
+.gradio/
+images/
+__pycache__/
+*.pyc
+submission_Exp1.csv
+bp_net.py
+CNN手写数字识别实验模板.md
+阿里云部署指南.md
+train_experiments.py
+test_model.py
+_push_data.json

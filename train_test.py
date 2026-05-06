@@ -76,7 +76,7 @@ def train_and_test():
     # 超参数
     batch_size = 128
     learning_rate = 0.001
-    epochs = 20
+    epochs = 50
     validation_split = 0.2  # 验证集比例
     
     # 加载数据
