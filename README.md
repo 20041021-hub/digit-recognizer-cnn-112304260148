@@ -20,7 +20,7 @@
 - **Private Score**：[私人分数]
 
 ## 5. Kaggle 截图
-![Kaggle截图](./images/kaggle_score.png)
+![Kaggle截图](./images/112304260148_wangwenhua_score.png)
 
 ## 6. 实验方法说明
 

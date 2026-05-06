@@ -3,7 +3,7 @@ test.csv
 *.zip
 *.pdf
 .gradio/
-images/
+
 __pycache__/
 *.pyc
 submission_Exp1.csv
